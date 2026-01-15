@@ -1,27 +1,32 @@
 # app/ui_admin.py
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from .ui_common import HeaderFrame
 from .ui_action_center import ActionCenterUI
 from .ui_audit import AuditTrailUI
-from .db import (
-    list_users,
-    get_user,
-    upsert_user,
-    update_user_fields,
-    list_screen_permissions,
-    set_screen_permission,
-    delete_screen_permission,
-    list_lines,
-    get_production_goal,
-    fetch_tool_entries,
-)
-from .permissions import ROLE_SCREEN_DEFAULTS
 from .screen_registry import SCREEN_REGISTRY
-from .audit import log_audit
+from .ui_error_handling import wrap_ui_action
+from .services.tool_life_service import (
+    get_production_goal_value,
+    list_lines_service,
+    list_tool_change_entries,
+)
+from .services.user_service import (
+    create_user,
+    delete_permission,
+    get_user_account,
+    list_permissions,
+    list_user_accounts,
+    set_permission,
+    update_user,
+)
+from backups.backup_manager import create_backup_now
+from .config import BACKUPS_DIR
 
 
 class AdminUI(tk.Frame):
@@ -92,7 +97,21 @@ class AdminUI(tk.Frame):
             font=("Arial", 16, "bold")
         ).pack(side="left")
 
-        tk.Button(top, text="Refresh", command=self.refresh_users).pack(side="right")
+        tk.Button(
+            top,
+            text="Refresh",
+            command=wrap_ui_action(self.controller, "Admin", "refresh_users", self.refresh_users),
+        ).pack(side="right")
+        tk.Button(
+            top,
+            text="Create Backup Now",
+            command=wrap_ui_action(self.controller, "Admin", "create_backup", self._create_backup_now),
+        ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            top,
+            text="Open Backups Folder",
+            command=wrap_ui_action(self.controller, "Admin", "open_backups", self._open_backups_folder),
+        ).pack(side="right", padx=(0, 8))
 
         form = tk.LabelFrame(
             parent,
@@ -132,9 +151,21 @@ class AdminUI(tk.Frame):
 
         btns = tk.Frame(form, bg=self.controller.colors["bg"])
         btns.pack(fill="x", pady=(10, 0))
-        tk.Button(btns, text="Create User", command=self.create_user).pack(side="right")
-        tk.Button(btns, text="Update User", command=self.update_user).pack(side="right", padx=(0, 8))
-        tk.Button(btns, text="Reset Password", command=self.reset_password).pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns,
+            text="Create User",
+            command=wrap_ui_action(self.controller, "Admin", "create_user", self.create_user),
+        ).pack(side="right")
+        tk.Button(
+            btns,
+            text="Update User",
+            command=wrap_ui_action(self.controller, "Admin", "update_user", self.update_user),
+        ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns,
+            text="Reset Password",
+            command=wrap_ui_action(self.controller, "Admin", "reset_password", self.reset_password),
+        ).pack(side="right", padx=(0, 8))
 
         listbox_frame = tk.LabelFrame(
             parent,
@@ -184,7 +215,7 @@ class AdminUI(tk.Frame):
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        users = list_users()
+        users = list_user_accounts()
         for u in users:
             self.tree.insert("", "end", values=(
                 u.get("username", ""),
@@ -215,12 +246,18 @@ class AdminUI(tk.Frame):
             messagebox.showerror("Error", "Select a valid role.")
             return
 
-        if get_user(username):
+        if get_user_account(username):
             messagebox.showerror("Error", f"Username '{username}' already exists.")
             return
 
-        upsert_user(username=username, password=password, role=role, name=name, line=line)
-        log_audit(self.controller.user, f"Created user {username} ({role})")
+        create_user(
+            username=username,
+            password=password,
+            role=role,
+            name=name,
+            line=line,
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
 
         # Clear inputs
         self.var_username.set("")
@@ -238,7 +275,7 @@ class AdminUI(tk.Frame):
         if not sel:
             return
         username = self.tree.item(sel[0], "values")[0]
-        user = get_user(username)
+        user = get_user_account(username)
         if not user:
             return
         self.var_username.set(user.get("username", ""))
@@ -256,8 +293,11 @@ class AdminUI(tk.Frame):
         role = self.var_role.get().strip()
         name = self.var_name.get().strip()
         line = self.var_line.get().strip() or "Both"
-        update_user_fields(username, {"role": role, "name": name, "line": line})
-        log_audit(self.controller.user, f"Updated user {username}")
+        update_user(
+            username,
+            {"role": role, "name": name, "line": line},
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
         messagebox.showinfo("Updated", f"welcome '{name}'")
         self.refresh_users()
 
@@ -270,11 +310,31 @@ class AdminUI(tk.Frame):
         if not new_password:
             messagebox.showerror("Error", "Enter a new password.")
             return
-        update_user_fields(username, {"password": new_password})
+        update_user(
+            username,
+            {"password": new_password},
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
         self.var_current_password.set(new_password)
         self.var_new_password.set("")
-        log_audit(self.controller.user, f"Reset password for {username}")
         messagebox.showinfo("Password Reset", f"Password updated for {username}.")
+
+    def _create_backup_now(self):
+        backup_path = create_backup_now(
+            {"username": self.controller.user, "role": self.controller.role}
+        )
+        messagebox.showinfo("Backup Created", f"Backup saved to:\n{backup_path}")
+
+    def _open_backups_folder(self):
+        backup_dir = Path(BACKUPS_DIR)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if os.name == "nt":
+                os.startfile(str(backup_dir))
+            else:
+                messagebox.showinfo("Backups Folder", f"Backups folder:\n{backup_dir}")
+        except Exception as exc:
+            messagebox.showerror("Open Failed", f"Unable to open backups folder.\n{exc}")
 
     # -------------------------
     def _build_access_management(self, parent):
@@ -289,7 +349,11 @@ class AdminUI(tk.Frame):
             font=("Arial", 16, "bold"),
         ).pack(side="left")
 
-        tk.Button(top, text="Refresh", command=self.refresh_access).pack(side="right")
+        tk.Button(
+            top,
+            text="Refresh",
+            command=wrap_ui_action(self.controller, "Admin", "refresh_access", self.refresh_access),
+        ).pack(side="right")
 
         form = tk.LabelFrame(
             parent,
@@ -318,7 +382,7 @@ class AdminUI(tk.Frame):
         self.access_user_combo = ttk.Combobox(
             row_user,
             textvariable=self.access_user,
-            values=[u.get("username") for u in list_users()],
+            values=[u.get("username") for u in list_user_accounts()],
             state="readonly",
             width=24,
         )
@@ -368,8 +432,16 @@ class AdminUI(tk.Frame):
 
         btns = tk.Frame(form, bg=self.controller.colors["bg"])
         btns.pack(fill="x", pady=(10, 0))
-        tk.Button(btns, text="Save Access", command=self.save_access).pack(side="right")
-        tk.Button(btns, text="Remove Access", command=self.remove_access).pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns,
+            text="Save Access",
+            command=wrap_ui_action(self.controller, "Admin", "save_access", self.save_access),
+        ).pack(side="right")
+        tk.Button(
+            btns,
+            text="Remove Access",
+            command=wrap_ui_action(self.controller, "Admin", "remove_access", self.remove_access),
+        ).pack(side="right", padx=(0, 8))
 
         list_frame = tk.LabelFrame(
             parent,
@@ -394,7 +466,7 @@ class AdminUI(tk.Frame):
     def refresh_access(self):
         for i in self.access_tree.get_children():
             self.access_tree.delete(i)
-        for row in list_screen_permissions():
+        for row in list_permissions():
             self.access_tree.insert("", "end", values=(
                 row.get("username", ""),
                 row.get("screen", ""),
@@ -418,11 +490,18 @@ class AdminUI(tk.Frame):
             messagebox.showerror("Error", "Select a user and screen.")
             return
         if level == "none":
-            delete_screen_permission(username, screen)
-            log_audit(self.controller.user, f"Removed access {screen} for {username}")
+            delete_permission(
+                username,
+                screen,
+                actor_user={"username": self.controller.user, "role": self.controller.role},
+            )
         else:
-            set_screen_permission(username, screen, level)
-            log_audit(self.controller.user, f"Set access {screen}={level} for {username}")
+            set_permission(
+                username,
+                screen,
+                level,
+                actor_user={"username": self.controller.user, "role": self.controller.role},
+            )
         self.refresh_access()
 
     def remove_access(self):
@@ -431,8 +510,11 @@ class AdminUI(tk.Frame):
         if not username or not screen:
             messagebox.showerror("Error", "Select a user and screen.")
             return
-        delete_screen_permission(username, screen)
-        log_audit(self.controller.user, f"Removed access {screen} for {username}")
+        delete_permission(
+            username,
+            screen,
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
         self.refresh_access()
 
     # -------------------------
@@ -448,7 +530,11 @@ class AdminUI(tk.Frame):
             font=("Arial", 16, "bold"),
         ).pack(side="left")
 
-        tk.Button(header, text="Refresh", command=self.refresh_shift_reports).pack(side="right")
+        tk.Button(
+            header,
+            text="Refresh",
+            command=wrap_ui_action(self.controller, "Admin", "refresh_shift_reports", self.refresh_shift_reports),
+        ).pack(side="right")
 
         filters = tk.LabelFrame(
             parent,
@@ -472,7 +558,7 @@ class AdminUI(tk.Frame):
         tk.Label(row1, text="Line:", bg=self.controller.colors["bg"], fg=self.controller.colors["fg"]).pack(side="left")
         self.shift_line_combo = ttk.Combobox(
             row1,
-            values=["All"] + (list_lines() or []),
+            values=["All"] + (list_lines_service() or []),
             textvariable=self.shift_line_var,
             state="readonly",
             width=16,
@@ -514,7 +600,11 @@ class AdminUI(tk.Frame):
             width=12,
         ).pack(side="left", padx=6)
 
-        tk.Button(row2, text="Apply Filters", command=self.refresh_shift_reports).pack(side="right")
+        tk.Button(
+            row2,
+            text="Apply Filters",
+            command=wrap_ui_action(self.controller, "Admin", "apply_shift_filters", self.refresh_shift_reports),
+        ).pack(side="right")
 
         cols = (
             "ID",
@@ -542,7 +632,11 @@ class AdminUI(tk.Frame):
                 self.shift_tree.column(c, width=100)
         self.shift_tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        tk.Button(parent, text="Review Selected", command=self.review_shift_report).pack(
+        tk.Button(
+            parent,
+            text="Review Selected",
+            command=wrap_ui_action(self.controller, "Admin", "review_shift_report", self.review_shift_report),
+        ).pack(
             anchor="e", padx=16, pady=(0, 10)
         )
 
@@ -558,7 +652,7 @@ class AdminUI(tk.Frame):
         for i in self.shift_tree.get_children():
             self.shift_tree.delete(i)
 
-        entries = fetch_tool_entries()
+        entries = list_tool_change_entries()
         shift_entries = [e for e in entries if str(e.get("reason", "")).strip() == "Shift Production"]
 
         operators = sorted({e.get("tool_changer", "") for e in shift_entries if e.get("tool_changer")})
@@ -609,8 +703,8 @@ class AdminUI(tk.Frame):
         self.shift_report_cache = {}
         for entry, entry_dt in filtered:
             line = entry.get("line", "")
-            target = get_production_goal(
-                line,
+            target = get_production_goal_value(
+                line=line,
                 cell=entry.get("cell", ""),
                 machine=entry.get("machine", ""),
                 part_number=entry.get("part_number", ""),

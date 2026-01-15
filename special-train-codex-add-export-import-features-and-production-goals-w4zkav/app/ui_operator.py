@@ -7,16 +7,15 @@ from datetime import datetime
 
 from .ui_common import HeaderFrame
 from .storage import safe_int, safe_float
-from .db import (
-    list_downtime_codes,
-    list_lines,
-    list_cells_for_line,
-    list_machines_for_line,
-    list_parts_for_line,
-    replace_shift_downtime_entries,
-    upsert_tool_entry,
+from .services.tool_life_service import (
+    create_shift_report,
+    list_cells,
+    list_downtime_codes_service,
+    list_lines_service,
+    list_machines,
+    list_parts,
 )
-from .audit import log_audit
+from .ui_error_handling import wrap_ui_action
 
 
 class OperatorUI(tk.Frame):
@@ -57,7 +56,7 @@ class OperatorUI(tk.Frame):
         )
 
         tk.Label(body, text="Line:", **style).grid(row=1, column=0, sticky="e", pady=6)
-        line_options = list_lines()
+        line_options = list_lines_service()
         if not line_options:
             line_options = ["U725", "JL"]
         self.shift_line_var = tk.StringVar(value=self.controller.user_line or line_options[0])
@@ -112,7 +111,7 @@ class OperatorUI(tk.Frame):
 
         tk.Label(self.downtime_section, text="Downtime Code:", **style).grid(row=0, column=0, sticky="e", pady=6)
         self.downtime_var = tk.StringVar(value="")
-        codes = list_downtime_codes()
+        codes = list_downtime_codes_service()
         self.downtime_options = []
         self.downtime_map = {}
         for row in codes:
@@ -145,7 +144,7 @@ class OperatorUI(tk.Frame):
         tk.Button(
             self.downtime_section,
             text="Add Downtime",
-            command=self.add_downtime_entry,
+            command=wrap_ui_action(self.controller, "Operator", "add_downtime", self.add_downtime_entry),
             bg="#17a2b8",
             fg="white",
         ).grid(row=0, column=8, padx=(12, 0))
@@ -153,7 +152,7 @@ class OperatorUI(tk.Frame):
         tk.Button(
             self.downtime_section,
             text="Remove Selected",
-            command=self.remove_downtime_entry,
+            command=wrap_ui_action(self.controller, "Operator", "remove_downtime", self.remove_downtime_entry),
             bg="#dc3545",
             fg="white",
         ).grid(row=0, column=9, padx=(8, 0))
@@ -180,7 +179,7 @@ class OperatorUI(tk.Frame):
         tk.Button(
             body,
             text="Submit Shift Report",
-            command=self.submit_shift_report,
+            command=wrap_ui_action(self.controller, "Operator", "submit_shift_report", self.submit_shift_report),
             bg="#28a745",
             fg="white",
             font=("Arial", 12, "bold"),
@@ -202,13 +201,13 @@ class OperatorUI(tk.Frame):
 
     def _refresh_line_dependent_fields(self, event=None):
         line = self.shift_line_cb.get().strip()
-        cells = list_cells_for_line(line)
+        cells = list_cells(line)
         self.cell_cb.configure(values=cells)
         if cells:
             self.cell_cb.set(cells[0])
         else:
             self.cell_cb.set("")
-        parts = list_parts_for_line(line)
+        parts = list_parts(line)
         self.part_cb.configure(values=parts)
         if parts:
             self.part_cb.set(parts[0])
@@ -218,7 +217,7 @@ class OperatorUI(tk.Frame):
 
     def _refresh_machine_options(self, event=None):
         line = self.shift_line_cb.get().strip()
-        machines = list_machines_for_line(line)
+        machines = list_machines(line)
         self.machine_cb.configure(values=machines)
         if machines:
             self.machine_cb.set(machines[0])
@@ -325,10 +324,11 @@ class OperatorUI(tk.Frame):
             "Leader_Time": "",
             "Serial_Numbers": "",
         }
-        upsert_tool_entry(new_row)
-        if downtime_entries:
-            replace_shift_downtime_entries(entry_id, downtime_entries)
-        log_audit(self.controller.user, f"Shift production entry {entry_id} saved")
+        create_shift_report(
+            new_row,
+            downtime_entries,
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
 
         messagebox.showinfo("Saved", "Shift production report submitted for leader signoff.")
         self.shift_qty_entry.delete(0, "end")

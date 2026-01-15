@@ -1,0 +1,16 @@
+Startup failure:
+
+Traceback (most recent call last):
+  File "C:\Users\spratherjr\Music\friendly-parakeet-codex-add-downtime-tracking-and-production-goals-pq0ici\special-train-codex-add-export-import-features-and-production-goals-w4zkav\main.py", line 40, in main
+    initialize_app()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\spratherjr\Music\friendly-parakeet-codex-add-downtime-tracking-and-production-goals-pq0ici\special-train-codex-add-export-import-features-and-production-goals-w4zkav\app\__init__.py", line 80, in initialize_app
+    from .bootstrap import ensure_app_initialized
+  File "C:\Users\spratherjr\Music\friendly-parakeet-codex-add-downtime-tracking-and-production-goals-pq0ici\special-train-codex-add-export-import-features-and-production-goals-w4zkav\app\bootstrap.py", line 24, in <module>
+    from .db import (
+    ...<9 lines>...
+    )
+  File "C:\Users\spratherjr\Music\friendly-parakeet-codex-add-downtime-tracking-and-production-goals-pq0ici\special-train-codex-add-export-import-features-and-production-goals-w4zkav\app\db.py", line 330, in <module>
+    conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version','1')")
+    ^^^^
+NameError: name 'conn' is not defined

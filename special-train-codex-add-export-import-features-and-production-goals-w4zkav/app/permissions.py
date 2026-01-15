@@ -48,6 +48,24 @@ ROLE_SCREEN_DEFAULTS = {
         "Admin": "edit",
         "Audit Trail": "view",
     },
+    "UIDE": {
+        "Dashboard": "edit",
+        "Notifications": "edit",
+        "Action Center": "edit",
+        "Tool Changer": "edit",
+        "Operator": "edit",
+        "Leader": "edit",
+        "Quality": "edit",
+        "Gages": "edit",
+        "Risk Settings": "edit",
+        "Health Check": "edit",
+        "Shift Handoff": "edit",
+        "Repeat Offenders": "edit",
+        "Top level": "edit",
+        "Master Data": "edit",
+        "Admin": "edit",
+        "Audit Trail": "view",
+    },
 }
 
 

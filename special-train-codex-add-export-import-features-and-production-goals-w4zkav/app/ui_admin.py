@@ -44,7 +44,8 @@ class AdminUI(tk.Frame):
         "Leader",
         "Quality",
         "Top (Super User)",
-        "Admin"
+        "Admin",
+        "UIDE",
     ]
     SCREEN_LEVELS = ["view", "edit", "none"]
 

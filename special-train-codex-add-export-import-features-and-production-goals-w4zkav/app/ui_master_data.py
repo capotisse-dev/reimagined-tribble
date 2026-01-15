@@ -301,7 +301,7 @@ class MasterDataUI(tk.Frame):
             return
         if not messagebox.askyesno("Confirm", f"Delete tool '{tool}'?"):
             return
-        deactivate_tool(tool)
+        deactivate_tool(tool, deleted_by=self.controller.user)
         log_audit(self.controller.user, f"Deactivated tool {tool}")
         self.refresh_tools()
 
@@ -471,7 +471,7 @@ class MasterDataUI(tk.Frame):
         if not messagebox.askyesno("Confirm", f"Delete part '{pn}'?"):
             return
 
-        deactivate_part(pn)
+        deactivate_part(pn, deleted_by=self.controller.user)
         log_audit(self.controller.user, f"Deactivated part {pn}")
         self.refresh_parts()
 
@@ -667,7 +667,7 @@ class MasterDataUI(tk.Frame):
             return
         if not messagebox.askyesno("Confirm", f"Deactivate downtime code '{code}'?"):
             return
-        deactivate_downtime_code(code)
+        deactivate_downtime_code(code, deleted_by=self.controller.user)
         log_audit(self.controller.user, f"Deactivated downtime code {code}")
         self.refresh_downtime()
 
@@ -919,7 +919,7 @@ class MasterDataUI(tk.Frame):
         line, machine = self.machine_tree.item(sel[0], "values")
         if not messagebox.askyesno("Confirm", f"Delete machine '{machine}' from line '{line}'?"):
             return
-        delete_machine_from_line(line, machine)
+        delete_machine_from_line(line, machine, deleted_by=self.controller.user)
         log_audit(self.controller.user, f"Deleted machine {machine} from line {line}")
         self.refresh_line_machines()
 

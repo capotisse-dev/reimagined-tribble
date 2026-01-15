@@ -8,6 +8,9 @@ PERMISSIONS = {
         "manage_tools": "edit",
         "manage_users": "none",
         "export": "edit",
+        "manage_documents": "edit",
+        "manage_quality": "edit",
+        "manage_backups": "edit",
     },
     "Admin": {
         "view_data": "edit",
@@ -15,6 +18,9 @@ PERMISSIONS = {
         "manage_tools": "edit",
         "manage_users": "edit",
         "export": "edit",
+        "manage_documents": "edit",
+        "manage_quality": "edit",
+        "manage_backups": "edit",
     },
 }
 

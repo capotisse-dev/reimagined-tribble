@@ -8,16 +8,14 @@ from .ui_audit import AuditTrailUI
 from .screen_registry import get_screen_class
 from .storage import next_id, safe_int, safe_float, load_json, parts_for_line
 from .config import REASONS_FILE
-from .db import (
-    get_tool,
-    update_tool_stock,
-    upsert_tool_entry,
-    list_tools_for_line,
-    list_tool_inserts,
-    list_lines,
-    list_machines_for_line,
+from .services.tool_life_service import (
+    create_tool_change_entry,
+    get_tool_info,
+    list_lines_service,
+    list_machines,
+    list_tools,
 )
-from .audit import log_audit
+from .ui_error_handling import wrap_ui_action
 
 class ToolChangerUI(tk.Frame):
     def __init__(self, parent, controller, show_header=True):
@@ -64,7 +62,7 @@ class ToolChangerUI(tk.Frame):
 
         # Line
         tk.Label(body, text="Line:", **style).grid(row=1, column=0, sticky="e", pady=5)
-        line_options = list_lines() or ["U725", "JL"]
+        line_options = list_lines_service() or ["U725", "JL"]
         self.line_cb = ttk.Combobox(body, values=line_options, state="readonly", width=20)
         self.line_cb.current(0)
         self.line_cb.grid(row=1, column=1, sticky="w")
@@ -137,15 +135,20 @@ class ToolChangerUI(tk.Frame):
 
         # Submit
         tk.Button(
-            body, text="SUBMIT ENTRY", command=self.submit,
-            bg="#28a745", fg="white", font=("Arial", 14, "bold"), height=2
+            body,
+            text="SUBMIT ENTRY",
+            command=wrap_ui_action(self.controller, "Tool Changer", "submit_entry", self.submit),
+            bg="#28a745",
+            fg="white",
+            font=("Arial", 14, "bold"),
+            height=2,
         ).grid(row=11, column=0, columnspan=3, pady=20, sticky="we")
 
         self.update_machines()
 
     def update_machines(self, event=None):
         line = self.line_cb.get()
-        machs = list_machines_for_line(line)
+        machs = list_machines(line)
         self.mach_cb["values"] = machs
         self.mach_cb.set("")
         self.tool_cb.set("")
@@ -162,7 +165,7 @@ class ToolChangerUI(tk.Frame):
         if not machine:
             return
 
-        tools = list_tools_for_line(line, include_unassigned=True)
+        tools = list_tools(line, include_unassigned=True)
         if not tools:
             if line == "U725":
                 tools = [str(i) for i in range(1, 24)] + ["60"]
@@ -188,7 +191,7 @@ class ToolChangerUI(tk.Frame):
         if not tool:
             self.stock_lbl.config(text="Stock: N/A")
             return
-        info = get_tool(tool)
+        info = get_tool_info(tool)
         if info:
             self.stock_lbl.config(text=f"Stock: {info.get('stock_qty', 'N/A')}")
         else:
@@ -215,19 +218,14 @@ class ToolChangerUI(tk.Frame):
         cost = 0.0
 
         # Inventory decrement (if configured)
-        info = get_tool(tool_num)
-        inserts = list_tool_inserts(tool_num)
-        if inserts:
-            cost = self._calculate_insert_cost(inserts)
-        if info:
-            if not inserts:
-                cost = safe_float(info.get("unit_cost", 0), 0.0)
-            stock = safe_int(info.get("stock_qty", 0), 0)
-            if stock <= 0:
-                if not messagebox.askyesno("Stock Warning", f"Tool {tool_num} is out of stock! Submit anyway?"):
-                    return
-            else:
-                update_tool_stock(tool_num, stock - 1)
+        info = get_tool_info(tool_num)
+        stock = safe_int(info.get("stock_qty", 0) if info else 0, 0)
+        if stock <= 0:
+            if not messagebox.askyesno("Stock Warning", f"Tool {tool_num} is out of stock! Submit anyway?"):
+                return
+            new_stock_qty = None
+        else:
+            new_stock_qty = stock - 1
 
         now = datetime.now()
 
@@ -263,8 +261,12 @@ class ToolChangerUI(tk.Frame):
             "Serial_Numbers": ""
         }
 
-        upsert_tool_entry(new_row)
-        log_audit(self.controller.user, f"Tool change entry {new_row['ID']} saved")
+        cost = create_tool_change_entry(
+            new_row,
+            tool_num=tool_num,
+            new_stock_qty=new_stock_qty,
+            actor_user={"username": self.controller.user, "role": self.controller.role},
+        )
 
         messagebox.showinfo("Saved", f"Entry saved.\nTool cost: ${cost:,.2f}")
 
@@ -276,15 +278,3 @@ class ToolChangerUI(tk.Frame):
         self.defect_reason.delete(0, "end")
         self.life_entry.delete(0, "end"); self.life_entry.insert(0, "0")
         self.update_stock_display()
-
-    def _calculate_insert_cost(self, inserts):
-        total = 0.0
-        for ins in inserts:
-            count = safe_float(ins.get("insert_count", 0), 0.0)
-            price = safe_float(ins.get("price_per_insert", 0), 0.0)
-            life = safe_float(ins.get("tool_life", 0), 0.0)
-            sides = safe_float(ins.get("sides_per_insert", 1), 1.0)
-            if life <= 0 or sides <= 0:
-                continue
-            total += ((count * price) / life) / sides
-        return total

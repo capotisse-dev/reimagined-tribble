@@ -27,10 +27,10 @@ class HeaderFrame(ttk.Frame):
             side="left", padx=6
         )
 
-class FilePicker(ttk.Frame):
+class FilePicker(tk.Frame):
     def __init__(self, parent, on_change):
         super().__init__(parent)
-        ttk.Label(self, text="Month/File:").pack(side="left", padx=6)
+        tk.Label(self, text="Month/File:").pack(side="left", padx=6)
         self.cb = ttk.Combobox(self, values=list_month_files(), state="readonly", width=28)
         self.cb.pack(side="left", padx=6)
         self.cb.current(0)

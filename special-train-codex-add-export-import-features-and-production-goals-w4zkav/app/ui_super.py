@@ -5,24 +5,17 @@ import tkinter as tk
 from tkinter import ttk
 
 
-class _PlaceholderUI(tk.Frame):
+class _PlaceholderUI(ttk.Frame):
     """Shown when a tab's module/class isn't available yet (prevents app crash)."""
     def __init__(self, parent, controller, title="Missing Screen", detail="", show_header=False):
-        super().__init__(parent, bg=controller.colors["bg"])
-        fg = controller.colors.get("fg", "#FFFFFF")
-        bg = controller.colors.get("bg", "#111111")
-
-        wrap = tk.Frame(self, bg=bg, padx=18, pady=18)
+        super().__init__(parent)
+        wrap = ttk.Frame(self, padding=18)
         wrap.pack(fill="both", expand=True)
 
-        tk.Label(
-            wrap, text=title, bg=bg, fg=fg, font=("Arial", 16, "bold")
-        ).pack(anchor="w")
+        ttk.Label(wrap, text=title, font=("Arial", 16, "bold")).pack(anchor="w")
 
         if detail:
-            tk.Label(
-                wrap, text=detail, bg=bg, fg=fg, font=("Arial", 11), justify="left"
-            ).pack(anchor="w", pady=(10, 0))
+            ttk.Label(wrap, text=detail, font=("Arial", 11), justify="left").pack(anchor="w", pady=(10, 0))
 
 
 def _safe_view(factory, missing_title: str, missing_detail: str):
@@ -49,7 +42,7 @@ def _instantiate_view(ViewCls, tab, controller):
         ViewCls(tab, controller).pack(fill="both", expand=True)
 
 
-class SuperUI(tk.Frame):
+class _SideNavUI(tk.Frame):
     """
     Super (Top/Super User) UI:
     - All screens available
@@ -58,6 +51,7 @@ class SuperUI(tk.Frame):
     def __init__(self, parent, controller, show_header=True):
         super().__init__(parent, bg=controller.colors["bg"])
         self.controller = controller
+        self._view_cache = {}
 
         # Header (if you have one)
         if show_header:
@@ -70,9 +64,6 @@ class SuperUI(tk.Frame):
                 HeaderFrame(self, controller).pack(fill="x")
             except Exception:
                 pass
-
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=10, pady=10)
 
         # ---- Tab factories (lazy imports) ----
         NotificationsUI = _safe_view(
@@ -158,32 +149,71 @@ class SuperUI(tk.Frame):
             "Expected: app/ui_top.py → class TopUI (optional).",
         )
 
-        # ---- Tabs (Super gets everything) ----
-        tabs = [
-            ("On Shift Pass Down", DashboardUI),
-            ("Notifications", NotificationsUI),
-            ("Action Center", ActionCenterUI),
-            ("Audit Trail", AuditTrailUI),
+        layout = ttk.Frame(self)
+        layout.pack(fill="both", expand=True, padx=10, pady=10)
 
-            ("Tool Changer", ToolChangerUI),
-            ("Operator", OperatorUI),
-            ("Leader", LeaderUI),
-            ("Quality", QualityUI),
+        nav = ttk.Frame(layout)
+        nav.pack(side="left", fill="y", padx=(0, 10))
+        content = ttk.Frame(layout)
+        content.pack(side="left", fill="both", expand=True)
 
-            ("Gages", GagesUI),
+        self.nav_tree = ttk.Treeview(nav, show="tree")
+        self.nav_tree.pack(fill="y", expand=True)
 
-            ("Risk Settings", RiskSettingsUI),
-            ("Health Check", HealthCheckUI),
-            ("Shift Handoff", ShiftHandoffUI),
-            ("Repeat Offenders", RepeatOffendersUI),
+        sections = {
+            "Operations": [
+                ("On Shift Pass Down", DashboardUI),
+                ("Notifications", NotificationsUI),
+                ("Action Center", ActionCenterUI),
+                ("Audit Trail", AuditTrailUI),
+                ("Tool Changer", ToolChangerUI),
+                ("Operator", OperatorUI),
+                ("Leader", LeaderUI),
+                ("Quality", QualityUI),
+            ],
+            "Quality Tools": [
+                ("Gages", GagesUI),
+                ("Risk Settings", RiskSettingsUI),
+                ("Health Check", HealthCheckUI),
+                ("Shift Handoff", ShiftHandoffUI),
+                ("Repeat Offenders", RepeatOffendersUI),
+            ],
+            "Admin Tools": [
+                ("Top level", TopUI),
+                ("Master Data", MasterDataUI),
+                ("Admin", AdminUI),
+            ],
+        }
 
-            ("Top level", TopUI),
-            ("Master Data", MasterDataUI),
-            ("Admin", AdminUI),
-        ]
+        self._nav_map = {}
+        for section, items in sections.items():
+            parent_id = self.nav_tree.insert("", "end", text=section, open=True)
+            for name, view_cls in items:
+                item_id = self.nav_tree.insert(parent_id, "end", text=name)
+                self._nav_map[item_id] = (name, view_cls)
 
-        # Build tabs
-        for name, ViewCls in tabs:
-            tab = tk.Frame(nb, bg=controller.colors["bg"])
-            nb.add(tab, text=name)
-            _instantiate_view(ViewCls, tab, controller)
+        def _on_select(_event=None):
+            sel = self.nav_tree.selection()
+            if not sel:
+                return
+            item_id = sel[0]
+            if item_id not in self._nav_map:
+                return
+            name, view_cls = self._nav_map[item_id]
+            self._show_view(content, name, view_cls)
+
+        self.nav_tree.bind("<<TreeviewSelect>>", _on_select)
+
+        first_item = next(iter(self._nav_map.keys()), None)
+        if first_item:
+            self.nav_tree.selection_set(first_item)
+            _on_select()
+
+    def _show_view(self, parent, name, view_cls):
+        for child in parent.winfo_children():
+            child.destroy()
+        _instantiate_view(view_cls, parent, self.controller)
+
+
+class SuperUI(_SideNavUI):
+    pass

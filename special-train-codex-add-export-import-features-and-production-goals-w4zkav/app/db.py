@@ -270,6 +270,38 @@ def init_db() -> None:
         action TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS program_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_type TEXT NOT NULL,
+        machine_id INTEGER,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        parent_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by TEXT NOT NULL DEFAULT '',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE SET NULL,
+        FOREIGN KEY(parent_id) REFERENCES program_files(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS print_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_type TEXT NOT NULL,
+        machine_id INTEGER,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        parent_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by TEXT NOT NULL DEFAULT '',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE SET NULL,
+        FOREIGN KEY(parent_id) REFERENCES print_files(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS part_costs (
         part_id INTEGER NOT NULL UNIQUE,
         scrap_cost REAL NOT NULL DEFAULT 0.0,
@@ -306,6 +338,10 @@ def init_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_machine_documents_line_machine_type ON machine_documents(line_code, machine_code, doc_type);
     CREATE INDEX IF NOT EXISTS idx_machine_document_revisions_doc_rev ON machine_document_revisions(document_id, revision_number);
     CREATE INDEX IF NOT EXISTS idx_machine_document_revisions_hash ON machine_document_revisions(file_hash);
+    CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_user_action ON audit_logs(username, action);
+    CREATE INDEX IF NOT EXISTS idx_program_files_machine_filename ON program_files(machine_id, filename, is_active);
+    CREATE INDEX IF NOT EXISTS idx_print_files_machine_filename ON print_files(machine_id, filename, is_active);
     """
     with connect() as conn:
         conn.executescript(schema)
@@ -318,10 +354,51 @@ def init_db() -> None:
         _ensure_columns(conn, "tools", {
             "stock_qty": "INTEGER NOT NULL DEFAULT 0",
             "inserts_per_tool": "INTEGER NOT NULL DEFAULT 1",
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
+            "created_by": "TEXT NOT NULL DEFAULT ''",
+            "updated_by": "TEXT NOT NULL DEFAULT ''",
         })
         _ensure_columns(conn, "tool_entries", {
             "tool_life": "REAL NOT NULL DEFAULT 0.0",
             "production_qty": "REAL NOT NULL DEFAULT 0.0",
+        })
+        _ensure_columns(conn, "parts", {
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
+            "created_by": "TEXT NOT NULL DEFAULT ''",
+            "updated_by": "TEXT NOT NULL DEFAULT ''",
+        })
+        _ensure_columns(conn, "downtime_codes", {
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
+            "created_by": "TEXT NOT NULL DEFAULT ''",
+            "updated_by": "TEXT NOT NULL DEFAULT ''",
+        })
+        _ensure_columns(conn, "users", {
+            "created_by": "TEXT NOT NULL DEFAULT ''",
+            "updated_by": "TEXT NOT NULL DEFAULT ''",
+        })
+        _ensure_columns(conn, "lines", {
+            "is_active": "INTEGER NOT NULL DEFAULT 1",
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
+        })
+        _ensure_columns(conn, "cells", {
+            "is_active": "INTEGER NOT NULL DEFAULT 1",
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
+        })
+        _ensure_columns(conn, "machines", {
+            "is_active": "INTEGER NOT NULL DEFAULT 1",
+            "deleted_at": "TEXT NOT NULL DEFAULT ''",
+            "deleted_by": "TEXT NOT NULL DEFAULT ''",
+            "delete_reason": "TEXT NOT NULL DEFAULT ''",
         })
 
 
@@ -430,9 +507,14 @@ def ensure_lines(names: Iterable[str]) -> None:
                 conn.execute("INSERT OR IGNORE INTO lines(name) VALUES(?)", (n,))
 
 
-def list_lines() -> List[str]:
+def list_lines(include_inactive: bool = False) -> List[str]:
     with connect() as conn:
-        rows = conn.execute("SELECT name FROM lines ORDER BY name").fetchall()
+        if include_inactive:
+            rows = conn.execute("SELECT name FROM lines ORDER BY name").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name FROM lines WHERE is_active=1 ORDER BY name"
+            ).fetchall()
         return [r["name"] for r in rows]
 
 
@@ -466,7 +548,12 @@ def add_machine_to_line(line: str, machine: str) -> None:
         )
 
 
-def delete_machine_from_line(line: str, machine: str) -> None:
+def delete_machine_from_line(
+    line: str,
+    machine: str,
+    deleted_by: str = "",
+    delete_reason: str = "",
+) -> None:
     line = (line or "").strip()
     machine = (machine or "").strip()
     if not line or not machine:
@@ -478,7 +565,11 @@ def delete_machine_from_line(line: str, machine: str) -> None:
         line_id = int(row["id"])
         conn.execute(
             """
-            DELETE FROM machines
+            UPDATE machines
+            SET is_active=0,
+                deleted_at=datetime('now'),
+                deleted_by=?,
+                delete_reason=?
             WHERE name=?
               AND cell_id IN (
                 SELECT c.id
@@ -486,7 +577,7 @@ def delete_machine_from_line(line: str, machine: str) -> None:
                 WHERE c.line_id=?
               )
             """,
-            (machine, line_id),
+            (deleted_by or "", delete_reason or "", machine, line_id),
         )
 
 
@@ -508,7 +599,7 @@ def _ensure_default_cell(conn: sqlite3.Connection, line_id: int) -> int:
     return int(row["id"]) if row else 0
 
 
-def list_cells_for_line(line: str) -> List[str]:
+def list_cells_for_line(line: str, include_inactive: bool = False) -> List[str]:
     with connect() as conn:
         line = (line or "").strip()
         if not line:
@@ -517,14 +608,24 @@ def list_cells_for_line(line: str) -> List[str]:
         if not row:
             return []
         line_id = row["id"]
-        rows = conn.execute(
-            "SELECT name FROM cells WHERE line_id=? ORDER BY name",
-            (line_id,),
-        ).fetchall()
+        if include_inactive:
+            rows = conn.execute(
+                "SELECT name FROM cells WHERE line_id=? ORDER BY name",
+                (line_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name FROM cells WHERE line_id=? AND is_active=1 ORDER BY name",
+                (line_id,),
+            ).fetchall()
         return [r["name"] for r in rows]
 
 
-def list_machines_for_cell(line: str, cell: str) -> List[str]:
+def list_machines_for_cell(
+    line: str,
+    cell: str,
+    include_inactive: bool = False,
+) -> List[str]:
     with connect() as conn:
         line = (line or "").strip()
         cell = (cell or "").strip()
@@ -541,14 +642,20 @@ def list_machines_for_cell(line: str, cell: str) -> List[str]:
         if not cell_row:
             return []
         cell_id = cell_row["id"]
-        rows = conn.execute(
-            "SELECT name FROM machines WHERE cell_id=? ORDER BY name",
-            (cell_id,),
-        ).fetchall()
+        if include_inactive:
+            rows = conn.execute(
+                "SELECT name FROM machines WHERE cell_id=? ORDER BY name",
+                (cell_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name FROM machines WHERE cell_id=? AND is_active=1 ORDER BY name",
+                (cell_id,),
+            ).fetchall()
         return [r["name"] for r in rows]
 
 
-def list_machines_for_line(line: str) -> List[str]:
+def list_machines_for_line(line: str, include_inactive: bool = False) -> List[str]:
     with connect() as conn:
         line = (line or "").strip()
         if not line:
@@ -557,17 +664,51 @@ def list_machines_for_line(line: str) -> List[str]:
         if not row:
             return []
         line_id = row["id"]
-        rows = conn.execute(
+        if include_inactive:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT m.name
+                FROM machines m
+                JOIN cells c ON c.id = m.cell_id
+                WHERE c.line_id=?
+                ORDER BY m.name
+                """,
+                (line_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT m.name
+                FROM machines m
+                JOIN cells c ON c.id = m.cell_id
+                WHERE c.line_id=? AND m.is_active=1
+                ORDER BY m.name
+                """,
+                (line_id,),
+            ).fetchall()
+        return [r["name"] for r in rows]
+
+
+def get_machine_id_for_line(line: str, machine: str) -> Optional[int]:
+    with connect() as conn:
+        line = (line or "").strip()
+        machine = (machine or "").strip()
+        if not line or not machine:
+            return None
+        row = conn.execute("SELECT id FROM lines WHERE name=?", (line,)).fetchone()
+        if not row:
+            return None
+        line_id = row["id"]
+        machine_row = conn.execute(
             """
-            SELECT DISTINCT m.name
+            SELECT m.id
             FROM machines m
             JOIN cells c ON c.id = m.cell_id
-            WHERE c.line_id=?
-            ORDER BY m.name
+            WHERE c.line_id=? AND m.name=?
             """,
-            (line_id,),
-        ).fetchall()
-        return [r["name"] for r in rows]
+            (line_id, machine),
+        ).fetchone()
+        return int(machine_row["id"]) if machine_row else None
 
 
 def list_parts_for_line(line: str) -> List[str]:
@@ -691,11 +832,19 @@ def upsert_part(part_number: str, name: str = "", lines: Optional[List[str]] = N
             conn.execute("INSERT OR IGNORE INTO part_lines(part_id,line_id) VALUES(?,?)", (part_id, line_id))
 
 
-def deactivate_part(part_number: str) -> None:
+def deactivate_part(part_number: str, deleted_by: str = "", delete_reason: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "UPDATE parts SET is_active=0, updated_at=datetime('now') WHERE part_number=?",
-            (part_number,),
+            """
+            UPDATE parts
+            SET is_active=0,
+                updated_at=datetime('now'),
+                deleted_at=datetime('now'),
+                deleted_by=?,
+                delete_reason=?
+            WHERE part_number=?
+            """,
+            (deleted_by or "", delete_reason or "", part_number),
         )
 
 
@@ -721,20 +870,33 @@ def upsert_tool_inventory(
     unit_cost: float = 0.0,
     stock_qty: int = 0,
     inserts_per_tool: int = 1,
+    created_by: str = "",
+    updated_by: str = "",
 ) -> None:
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tools(tool_num, name, unit_cost, stock_qty, inserts_per_tool, is_active)
-            VALUES(?, ?, ?, ?, ?, 1)
+            INSERT INTO tools(
+                tool_num, name, unit_cost, stock_qty, inserts_per_tool, is_active, created_by, updated_by
+            )
+            VALUES(?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(tool_num) DO UPDATE SET
               name=excluded.name,
               unit_cost=excluded.unit_cost,
               stock_qty=excluded.stock_qty,
               inserts_per_tool=excluded.inserts_per_tool,
-              updated_at=datetime('now')
+              updated_at=datetime('now'),
+              updated_by=excluded.updated_by
             """,
-            (tool_num, name, float(unit_cost), int(stock_qty), int(inserts_per_tool)),
+            (
+                tool_num,
+                name,
+                float(unit_cost),
+                int(stock_qty),
+                int(inserts_per_tool),
+                created_by or "",
+                updated_by or "",
+            ),
         )
 
 
@@ -747,19 +909,27 @@ def get_tool(tool_num: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
-def update_tool_stock(tool_num: str, stock_qty: int) -> None:
+def update_tool_stock(tool_num: str, stock_qty: int, updated_by: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "UPDATE tools SET stock_qty=?, updated_at=datetime('now') WHERE tool_num=?",
-            (int(stock_qty), tool_num),
+            "UPDATE tools SET stock_qty=?, updated_at=datetime('now'), updated_by=? WHERE tool_num=?",
+            (int(stock_qty), updated_by or "", tool_num),
         )
 
 
-def deactivate_tool(tool_num: str) -> None:
+def deactivate_tool(tool_num: str, deleted_by: str = "", delete_reason: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "UPDATE tools SET is_active=0, updated_at=datetime('now') WHERE tool_num=?",
-            (tool_num,),
+            """
+            UPDATE tools
+            SET is_active=0,
+                updated_at=datetime('now'),
+                deleted_at=datetime('now'),
+                deleted_by=?,
+                delete_reason=?
+            WHERE tool_num=?
+            """,
+            (deleted_by or "", delete_reason or "", tool_num),
         )
 
 
@@ -1024,11 +1194,19 @@ def upsert_downtime_code(code: str, description: str = "") -> None:
         )
 
 
-def deactivate_downtime_code(code: str) -> None:
+def deactivate_downtime_code(code: str, deleted_by: str = "", delete_reason: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "UPDATE downtime_codes SET is_active=0, updated_at=datetime('now') WHERE code=?",
-            (code,),
+            """
+            UPDATE downtime_codes
+            SET is_active=0,
+                updated_at=datetime('now'),
+                deleted_at=datetime('now'),
+                deleted_by=?,
+                delete_reason=?
+            WHERE code=?
+            """,
+            (deleted_by or "", delete_reason or "", code),
         )
 
 
@@ -1148,28 +1326,31 @@ def upsert_user(
     name: str,
     line: str = "Both",
     is_active: int = 1,
+    created_by: str = "",
+    updated_by: str = "",
 ) -> None:
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO users(username, password, role, name, line, is_active)
-            VALUES(?,?,?,?,?,?)
+            INSERT INTO users(username, password, role, name, line, is_active, created_by, updated_by)
+            VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(username) DO UPDATE SET
               password=excluded.password,
               role=excluded.role,
               name=excluded.name,
               line=excluded.line,
               is_active=excluded.is_active,
-              updated_at=datetime('now')
+              updated_at=datetime('now'),
+              updated_by=excluded.updated_by
             """,
-            (username, password, role, name, line, int(is_active)),
+            (username, password, role, name, line, int(is_active), created_by or "", updated_by or ""),
         )
 
 
 def update_user_fields(username: str, fields: Dict[str, Any]) -> None:
     if not fields:
         return
-    allowed = {"password", "role", "name", "line", "is_active"}
+    allowed = {"password", "role", "name", "line", "is_active", "updated_by"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -1243,12 +1424,11 @@ def list_entry_months() -> List[str]:
         return [r["month"] for r in rows if r["month"]]
 
 
-def upsert_tool_entry(entry: Dict[str, Any]) -> None:
+def _normalize_tool_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if not entry.get("ID") and not entry.get("id"):
         raise ValueError("Entry must include ID")
     entry_id = str(entry.get("ID") or entry.get("id"))
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    record = {
+    return {
         "id": entry_id,
         "date": entry.get("Date", ""),
         "time": entry.get("Time", ""),
@@ -1286,21 +1466,74 @@ def upsert_tool_entry(entry: Dict[str, Any]) -> None:
         "gage_used": entry.get("Gage_Used", ""),
         "copq_est": float(entry.get("COPQ_Est", 0.0) or 0.0),
     }
+
+
+def _upsert_tool_entry(conn: sqlite3.Connection, record: Dict[str, Any]) -> None:
+    entry_id = record["id"]
+    existing = conn.execute(
+        "SELECT id FROM tool_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if existing:
+        sets = ", ".join([f"{k}=?" for k in record.keys() if k != "id"])
+        params = [record[k] for k in record.keys() if k != "id"] + [entry_id]
+        conn.execute(f"UPDATE tool_entries SET {sets} WHERE id=?", params)
+    else:
+        columns = ", ".join(record.keys())
+        placeholders = ", ".join(["?"] * len(record))
+        conn.execute(
+            f"INSERT INTO tool_entries ({columns}) VALUES ({placeholders})",
+            list(record.values()),
+        )
+
+
+def upsert_tool_entry(entry: Dict[str, Any]) -> None:
+    record = _normalize_tool_entry(entry)
     with connect() as conn:
-        existing = conn.execute(
-            "SELECT id FROM tool_entries WHERE id=?",
-            (entry_id,),
-        ).fetchone()
-        if existing:
-            sets = ", ".join([f"{k}=?" for k in record.keys() if k != "id"])
-            params = [record[k] for k in record.keys() if k != "id"] + [entry_id]
-            conn.execute(f"UPDATE tool_entries SET {sets} WHERE id=?", params)
-        else:
-            columns = ", ".join(record.keys())
-            placeholders = ", ".join(["?"] * len(record))
+        _upsert_tool_entry(conn, record)
+
+
+def apply_tool_change(
+    entry: Dict[str, Any],
+    *,
+    tool_num: str,
+    new_stock_qty: Optional[int],
+    updated_by: str = "",
+) -> None:
+    record = _normalize_tool_entry(entry)
+    with connect() as conn:
+        if new_stock_qty is not None:
             conn.execute(
-                f"INSERT INTO tool_entries ({columns}) VALUES ({placeholders})",
-                list(record.values()),
+                "UPDATE tools SET stock_qty=?, updated_at=datetime('now'), updated_by=? WHERE tool_num=?",
+                (int(new_stock_qty), updated_by or "", tool_num),
+            )
+        _upsert_tool_entry(conn, record)
+
+
+def upsert_tool_entry_with_downtime(
+    entry: Dict[str, Any],
+    downtime_entries: List[Dict[str, Any]],
+) -> None:
+    record = _normalize_tool_entry(entry)
+    with connect() as conn:
+        _upsert_tool_entry(conn, record)
+        conn.execute("DELETE FROM shift_downtime_entries WHERE tool_entry_id=?", (record["id"],))
+        for d in downtime_entries:
+            conn.execute(
+                """
+                INSERT INTO shift_downtime_entries(
+                    tool_entry_id, downtime_code, downtime_minutes,
+                    downtime_occurrences, downtime_comments
+                )
+                VALUES(?,?,?,?,?)
+                """,
+                (
+                    record["id"],
+                    d.get("code", ""),
+                    float(d.get("minutes", 0.0) or 0.0),
+                    int(d.get("occurrences", 0) or 0),
+                    d.get("comments", "") or "",
+                ),
             )
 
 
@@ -1649,3 +1882,269 @@ def list_machine_documents(
             params,
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def list_program_revisions(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM program_files
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+            ORDER BY revision DESC
+            """,
+            (scope_type, filename, machine_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_program_files(
+    scope_type: str,
+    machine_id: Optional[int] = None,
+    search: str = "",
+) -> List[Dict[str, Any]]:
+    params: List[Any] = [scope_type, machine_id]
+    search_clause = ""
+    if search:
+        search_clause = "AND lower(p.filename) LIKE ?"
+        params.append(f"%{search.lower()}%")
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.*
+            FROM program_files p
+            JOIN (
+                SELECT filename, MAX(revision) AS max_rev
+                FROM program_files
+                WHERE scope_type=?
+                  AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+                GROUP BY filename
+            ) latest ON latest.filename = p.filename AND latest.max_rev = p.revision
+            WHERE p.scope_type=?
+              AND COALESCE(p.machine_id, 0)=COALESCE(?, 0)
+              {search_clause}
+            ORDER BY p.filename
+            """,
+            [scope_type, machine_id, scope_type, machine_id] + params[2:],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_print_revisions(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM print_files
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+            ORDER BY revision DESC
+            """,
+            (scope_type, filename, machine_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_print_files(
+    scope_type: str,
+    machine_id: Optional[int] = None,
+    search: str = "",
+) -> List[Dict[str, Any]]:
+    params: List[Any] = [scope_type, machine_id]
+    search_clause = ""
+    if search:
+        search_clause = "AND lower(p.filename) LIKE ?"
+        params.append(f"%{search.lower()}%")
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.*
+            FROM print_files p
+            JOIN (
+                SELECT filename, MAX(revision) AS max_rev
+                FROM print_files
+                WHERE scope_type=?
+                  AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+                GROUP BY filename
+            ) latest ON latest.filename = p.filename AND latest.max_rev = p.revision
+            WHERE p.scope_type=?
+              AND COALESCE(p.machine_id, 0)=COALESCE(?, 0)
+              {search_clause}
+            ORDER BY p.filename
+            """,
+            [scope_type, machine_id, scope_type, machine_id] + params[2:],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_active_program(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM program_files
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+              AND is_active=1
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (scope_type, filename, machine_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_active_print(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM print_files
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+              AND is_active=1
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (scope_type, filename, machine_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def add_program_file(
+    *,
+    scope_type: str,
+    machine_id: Optional[int],
+    filename: str,
+    file_path: str,
+    file_hash: str,
+    revision: int,
+    parent_id: Optional[int],
+    created_by: str,
+    is_active: int = 1,
+) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO program_files(
+                scope_type, machine_id, filename, file_path, file_hash,
+                revision, parent_id, created_by, is_active
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scope_type,
+                machine_id,
+                filename,
+                file_path,
+                file_hash,
+                revision,
+                parent_id,
+                created_by or "",
+                int(is_active),
+            ),
+        )
+        return int(row.lastrowid)
+
+
+def add_print_file(
+    *,
+    scope_type: str,
+    machine_id: Optional[int],
+    filename: str,
+    file_path: str,
+    file_hash: str,
+    revision: int,
+    parent_id: Optional[int],
+    created_by: str,
+    is_active: int = 1,
+) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO print_files(
+                scope_type, machine_id, filename, file_path, file_hash,
+                revision, parent_id, created_by, is_active
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scope_type,
+                machine_id,
+                filename,
+                file_path,
+                file_hash,
+                revision,
+                parent_id,
+                created_by or "",
+                int(is_active),
+            ),
+        )
+        return int(row.lastrowid)
+
+
+def deactivate_program_revisions(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int],
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE program_files
+            SET is_active=0
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+            """,
+            (scope_type, filename, machine_id),
+        )
+
+
+def deactivate_print_revisions(
+    scope_type: str,
+    filename: str,
+    machine_id: Optional[int],
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE print_files
+            SET is_active=0
+            WHERE scope_type=?
+              AND filename=?
+              AND COALESCE(machine_id, 0)=COALESCE(?, 0)
+            """,
+            (scope_type, filename, machine_id),
+        )
+
+
+def activate_program_revision(target_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE program_files SET is_active=1 WHERE id=?", (target_id,))
+
+
+def activate_print_revision(target_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE print_files SET is_active=1 WHERE id=?", (target_id,))

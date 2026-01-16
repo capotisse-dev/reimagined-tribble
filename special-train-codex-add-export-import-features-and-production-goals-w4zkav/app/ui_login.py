@@ -1,6 +1,7 @@
 # app/ui_login.py
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
+import tkinter.font as tkfont
 
 from .bootstrap import ensure_app_initialized
 from .db import get_user, update_user_fields, get_meta, set_meta
@@ -17,6 +18,7 @@ from .ui_quality import QualityUI
 from .ui_top import TopUI
 from .ui_admin import AdminUI
 from .ui_super import SuperUI
+from .ui_uide import UIDEUI
 
 
 # -----------------------------
@@ -40,6 +42,7 @@ ROLE_ALIASES = {
     "admin": "Admin",
 
     "operator": "Operator",
+    "uide": "UIDE",
 }
 
 def normalize_role(role_value):
@@ -62,6 +65,7 @@ ROLE_TO_UI = {
     "Quality": QualityUI,
     "Top (Super User)": SuperUI,  # Super = "all screens console"
     "Admin": AdminUI,
+    "UIDE": UIDEUI,
 }
 
 
@@ -80,6 +84,14 @@ class App(tk.Tk):
 
         self.is_dark = False
         self.colors = LIGHT
+        self.style = ttk.Style(self)
+        self.theme_settings = {
+            "theme": "clam",
+            "dark": False,
+            "font_size": 11,
+            "spacing_scale": 1.0,
+        }
+        self.apply_theme_settings()
 
         self.user = None
         self.role = None
@@ -99,7 +111,8 @@ class App(tk.Tk):
 
     def toggle_theme(self):
         self.is_dark = not self.is_dark
-        self.colors = DARK if self.is_dark else LIGHT
+        self.theme_settings["dark"] = self.is_dark
+        self.apply_theme_settings()
 
         if self.user:
             self.route_role()
@@ -165,6 +178,56 @@ class App(tk.Tk):
                 extras.append(screen)
         return extras
 
+    def can_edit_layout(self) -> bool:
+        return normalize_role(self.role) == "UIDE"
+
+    def open_style_editor(self):
+        StyleEditor(self, self.theme_settings, on_apply=self.apply_theme_settings)
+
+    def apply_theme_settings(self):
+        settings = self.theme_settings
+        theme = settings.get("theme", "clam")
+        dark = settings.get("dark", False)
+        font_size = int(settings.get("font_size", 11))
+        spacing_scale = float(settings.get("spacing_scale", 1.0))
+
+        try:
+            self.style.theme_use(theme)
+        except tk.TclError:
+            self.style.theme_use("clam")
+
+        self.is_dark = bool(dark)
+        self.colors = DARK if self.is_dark else LIGHT
+
+        default_font = tkfont.nametofont("TkDefaultFont")
+        default_font.configure(size=font_size)
+        tkfont.nametofont("TkTextFont").configure(size=font_size)
+        tkfont.nametofont("TkHeadingFont").configure(size=font_size + 1, weight="bold")
+
+        padding = int(max(4, font_size * 0.6 * spacing_scale))
+        self.style.configure("TFrame", background=self.colors["bg"])
+        self.style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["fg"])
+        self.style.configure("Header.TLabel", background=self.colors["header_bg"], foreground=self.colors["fg"])
+        self.style.configure("TButton", padding=(padding, padding // 2))
+        self.style.configure("Primary.TButton", font=("Arial", font_size, "bold"))
+        self.style.configure("Secondary.TButton", font=("Arial", max(9, font_size - 1), "bold"))
+        self.style.configure("Danger.TButton", foreground="white", background="#d9534f")
+        self.style.map(
+            "Danger.TButton",
+            background=[("active", "#c9302c")],
+        )
+        self.style.configure(
+            "Treeview",
+            background=self.colors["bg"],
+            foreground=self.colors["fg"],
+            fieldbackground=self.colors["bg"],
+        )
+        self.style.configure(
+            "Treeview.Heading",
+            background=self.colors["header_bg"],
+            foreground=self.colors["fg"],
+        )
+
     def logout(self):
         if self.user:
             log_audit(self.user, "Logout")
@@ -182,48 +245,35 @@ class LoginPage(tk.Frame):
         super().__init__(parent, bg=controller.colors["bg"])
         self.controller = controller
 
-        card = tk.Frame(
-            self,
-            padx=40, pady=40,
-            relief="raised", borderwidth=2,
-            bg=controller.colors["header_bg"]
-        )
+        card = ttk.Frame(self, padding=40)
         card.place(relx=0.5, rely=0.5, anchor="center")
 
-        tk.Label(
-            card,
-            text="System Login",
-            font=("Arial", 20, "bold"),
-            bg=controller.colors["header_bg"],
-            fg=controller.colors["fg"]
-        ).pack(pady=20)
+        ttk.Label(card, text="System Login", font=("Arial", 20, "bold")).pack(pady=20)
 
-        tk.Label(card, text="Username:", bg=controller.colors["header_bg"], fg=controller.colors["fg"]).pack(anchor="w")
-        self.u = tk.Entry(card, width=30, font=("Arial", 12))
+        ttk.Label(card, text="Username:").pack(anchor="w")
+        self.u = ttk.Entry(card, width=30, font=("Arial", 12))
         self.u.pack(pady=5)
         self.u.focus_set()
 
-        tk.Label(card, text="Password:", bg=controller.colors["header_bg"], fg=controller.colors["fg"]).pack(anchor="w")
-        self.p = tk.Entry(card, width=30, show="*", font=("Arial", 12))
+        ttk.Label(card, text="Password:").pack(anchor="w")
+        self.p = ttk.Entry(card, width=30, show="*", font=("Arial", 12))
         self.p.pack(pady=5)
 
-        btns = tk.Frame(card, bg=controller.colors["header_bg"])
+        btns = ttk.Frame(card)
         btns.pack(pady=20)
 
-        tk.Button(
+        ttk.Button(
             btns,
             text="Login",
-            bg="#007bff", fg="white",
-            font=("Arial", 12, "bold"),
+            style="Primary.TButton",
             width=16,
             command=self.check
         ).pack(side="left", padx=6)
 
-        tk.Button(
+        ttk.Button(
             btns,
             text="Show/Reset Password",
-            bg="#6c757d", fg="white",
-            font=("Arial", 10, "bold"),
+            style="Secondary.TButton",
             width=18,
             command=self.show_or_reset_password
         ).pack(side="left", padx=6)
@@ -283,3 +333,51 @@ class LoginPage(tk.Frame):
                 return
             update_user_fields(u, {"password": new_pw})
             messagebox.showinfo("Reset", f"Password updated for {u}.")
+
+
+class StyleEditor(tk.Toplevel):
+    def __init__(self, controller: App, settings: dict, on_apply):
+        super().__init__(controller)
+        self.title("Style Settings")
+        self.resizable(False, False)
+        self.controller = controller
+        self.settings = settings
+        self.on_apply = on_apply
+
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text="Theme").grid(row=0, column=0, sticky="w")
+        self.theme_var = tk.StringVar(value=settings.get("theme", "clam"))
+        theme_values = sorted(self.controller.style.theme_names())
+        ttk.Combobox(body, textvariable=self.theme_var, values=theme_values, state="readonly", width=20).grid(
+            row=0, column=1, sticky="w", padx=8, pady=6
+        )
+
+        ttk.Label(body, text="Dark Mode").grid(row=1, column=0, sticky="w")
+        self.dark_var = tk.BooleanVar(value=settings.get("dark", False))
+        ttk.Checkbutton(body, variable=self.dark_var).grid(row=1, column=1, sticky="w", padx=8, pady=6)
+
+        ttk.Label(body, text="Font Size").grid(row=2, column=0, sticky="w")
+        self.font_var = tk.IntVar(value=int(settings.get("font_size", 11)))
+        ttk.Spinbox(body, from_=9, to=20, textvariable=self.font_var, width=6).grid(
+            row=2, column=1, sticky="w", padx=8, pady=6
+        )
+
+        ttk.Label(body, text="Spacing Scale").grid(row=3, column=0, sticky="w")
+        self.spacing_var = tk.DoubleVar(value=float(settings.get("spacing_scale", 1.0)))
+        ttk.Scale(body, from_=0.8, to=1.6, variable=self.spacing_var, orient="horizontal", length=160).grid(
+            row=3, column=1, sticky="w", padx=8, pady=6
+        )
+
+        btns = ttk.Frame(body)
+        btns.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(btns, text="Apply", command=self._apply).pack(side="right", padx=6)
+        ttk.Button(btns, text="Close", command=self.destroy).pack(side="right")
+
+    def _apply(self):
+        self.settings["theme"] = self.theme_var.get()
+        self.settings["dark"] = self.dark_var.get()
+        self.settings["font_size"] = self.font_var.get()
+        self.settings["spacing_scale"] = self.spacing_var.get()
+        self.on_apply()

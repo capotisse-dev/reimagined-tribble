@@ -36,7 +36,15 @@ class ActionCenterUI(tk.Frame):
         self.username = getattr(controller, "username", "") or getattr(controller, "user", "") or ""
         self.role = getattr(controller, "role", "") or ""
 
-        self.can_create = self.role in ("Admin", "Top (Super User)", "Top", "Super", "Super User", "Top (Super User)")
+        self.can_create = self.role in (
+            "Admin",
+            "Top (Super User)",
+            "Top",
+            "Super",
+            "Super User",
+            "Top (Super User)",
+            "UIDE",
+        )
 
         # Top bar
         top = tk.Frame(self, bg=controller.colors["bg"], padx=10, pady=10)

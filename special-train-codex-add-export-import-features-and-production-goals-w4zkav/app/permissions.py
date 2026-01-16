@@ -12,17 +12,6 @@ PERMISSIONS = {
         "manage_quality": "edit",
         "manage_backups": "edit",
     },
-    "UIDE": {
-        "view_data": "edit",
-        "edit_any": "override",
-        "manage_tools": "edit",
-        "manage_users": "none",
-        "export": "edit",
-        "manage_documents": "edit",
-        "manage_quality": "edit",
-        "manage_backups": "edit",
-        "layout_edit": "edit",
-    },
     "Admin": {
         "view_data": "edit",
         "edit_any": "edit",

@@ -209,8 +209,6 @@ class App(tk.Tk):
         self.style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["fg"])
         self.style.configure("Header.TLabel", background=self.colors["header_bg"], foreground=self.colors["fg"])
         self.style.configure("TButton", padding=(padding, padding // 2))
-        self.style.configure("Primary.TButton", font=("Arial", font_size, "bold"))
-        self.style.configure("Secondary.TButton", font=("Arial", max(9, font_size - 1), "bold"))
         self.style.configure("Danger.TButton", foreground="white", background="#d9534f")
         self.style.map(
             "Danger.TButton",
@@ -265,7 +263,7 @@ class LoginPage(tk.Frame):
         ttk.Button(
             btns,
             text="Login",
-            style="Primary.TButton",
+            font=("Arial", 12, "bold"),
             width=16,
             command=self.check
         ).pack(side="left", padx=6)
@@ -273,7 +271,7 @@ class LoginPage(tk.Frame):
         ttk.Button(
             btns,
             text="Show/Reset Password",
-            style="Secondary.TButton",
+            font=("Arial", 10, "bold"),
             width=18,
             command=self.show_or_reset_password
         ).pack(side="left", padx=6)

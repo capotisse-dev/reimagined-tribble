@@ -5,24 +5,17 @@ import tkinter as tk
 from tkinter import ttk
 
 
-class _PlaceholderUI(tk.Frame):
+class _PlaceholderUI(ttk.Frame):
     """Shown when a tab's module/class isn't available yet (prevents app crash)."""
     def __init__(self, parent, controller, title="Missing Screen", detail="", show_header=False):
-        super().__init__(parent, bg=controller.colors["bg"])
-        fg = controller.colors.get("fg", "#FFFFFF")
-        bg = controller.colors.get("bg", "#111111")
-
-        wrap = tk.Frame(self, bg=bg, padx=18, pady=18)
+        super().__init__(parent)
+        wrap = ttk.Frame(self, padding=18)
         wrap.pack(fill="both", expand=True)
 
-        tk.Label(
-            wrap, text=title, bg=bg, fg=fg, font=("Arial", 16, "bold")
-        ).pack(anchor="w")
+        ttk.Label(wrap, text=title, font=("Arial", 16, "bold")).pack(anchor="w")
 
         if detail:
-            tk.Label(
-                wrap, text=detail, bg=bg, fg=fg, font=("Arial", 11), justify="left"
-            ).pack(anchor="w", pady=(10, 0))
+            ttk.Label(wrap, text=detail, font=("Arial", 11), justify="left").pack(anchor="w", pady=(10, 0))
 
 
 def _safe_view(factory, missing_title: str, missing_detail: str):

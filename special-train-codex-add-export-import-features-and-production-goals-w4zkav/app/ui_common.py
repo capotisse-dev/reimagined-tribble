@@ -40,7 +40,7 @@ class FilePicker(tk.Frame):
     def get(self):
         return self.cb.get()
 
-class DataTable(tk.Frame):
+class DataTable(ttk.Frame):
     def __init__(self, parent, columns):
         super().__init__(parent)
         self.columns = columns

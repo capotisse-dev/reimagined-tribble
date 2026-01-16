@@ -27,6 +27,31 @@ class HeaderFrame(ttk.Frame):
             side="left", padx=6
         )
 
+LIGHT = {"bg": "#f0f0f0", "fg": "black", "header_bg": "#cccccc"}
+DARK = {"bg": "#2e2e2e", "fg": "white", "header_bg": "#1a1a1a"}
+
+
+class HeaderFrame(ttk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, height=70)
+        self.pack_propagate(False)
+
+        info = f"User: {controller.user} ({controller.role})"
+        ttk.Label(self, text=info, style="Header.TLabel").pack(side="left", padx=20)
+
+        right = ttk.Frame(self)
+        right.pack(side="right", padx=10)
+
+        mode_text = "Light Mode" if controller.is_dark else "Dark Mode"
+        ttk.Button(right, text=mode_text, command=controller.toggle_theme, width=12).pack(side="left", padx=6)
+        if getattr(controller, "can_edit_layout", lambda: False)():
+            ttk.Button(right, text="Style", command=controller.open_style_editor, width=10).pack(
+                side="left", padx=6
+            )
+        ttk.Button(right, text="Logout", command=controller.logout, style="Danger.TButton").pack(
+            side="left", padx=6
+        )
+
 class FilePicker(tk.Frame):
     def __init__(self, parent, on_change):
         super().__init__(parent)
